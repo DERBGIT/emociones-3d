@@ -1,0 +1,26 @@
+# Sistema / editores
+Thumbs.db
+desktop.ini
+.DS_Store
+*.tmp
+*.bak
+~$*
+
+# Google Drive
+.tmp.drivedownload/
+.tmp.driveupload/
+
+# Python
+__pycache__/
+*.pyc
+
+# Node (por si se usa en el futuro)
+node_modules/
+
+# Privado: el repositorio es publico. Nunca se suben notas exportadas ni material con derechos.
+datos/
+*.ruler
+/RULER_*.json
+Emociones3D_*.json
+Lovheim2012.pdf
+Promts.txt

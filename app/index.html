@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#020617">
+    <meta name="description" content="Emociones 3D: ubica, nombra y acompaña tu estado emocional en un cubo de tres ejes. Tus notas se guardan solo en tu dispositivo.">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Emociones 3D">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./icons/icon-192.png" type="image/png">
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+    <title>Emociones 3D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; background: #020617; color: white; overflow: hidden; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .glass-sidebar { background: #0a0f1e; }
+        .emotion-card { background: linear-gradient(145deg, #1e1b4b 0%, #0f172a 100%); border: 1px solid #312e81; border-radius: 1rem; }
+        .coord-pill { background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(10px); border: 1px solid #1e293b; border-radius: 1.25rem; }
+        .btn-active { background: #1e3a8a; color: white; border: 1px solid #3b82f6; }
+        .btn-inactive { color: #94a3b8; border: 1px solid transparent; }
+        .btn-inactive:hover { background: rgba(255,255,255,0.05); }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+        canvas { touch-action: none; outline: none; }
+
+        /* Rueda de afinado estilo Mod Wheel */
+        .mod-wheel-track {
+            background: linear-gradient(180deg, #581c87 0%, #1e3a8a 50%, #065f46 100%);
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.7);
+        }
+        .field { width: 100%; background: #1e293b; border: 1px solid #475569; border-radius: 0.75rem; padding: 0.55rem 0.85rem; font-size: 0.82rem; color: white; outline: none; }
+        .field:focus { border-color: #3b82f6; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script src="./glosario.js"></script>
+
+    <script type="module">
+        import React, { useState, useEffect, useRef, useMemo } from 'https://esm.sh/react@18.2.0';
+        import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+        import htm from 'https://esm.sh/htm';
+        import * as THREE from 'https://esm.sh/three@0.160.0';
+        import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+        import { DragControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/DragControls.js';
+        import * as Lucide from 'https://esm.sh/lucide-react@0.344.0';
+
+        const html = htm.bind(React.createElement);
+
+        const APP_VERSION = "5.0.2";
+        const APP_NOMBRE = "Emociones 3D";
+        const DIAS_RECORDATORIO = 7;
+        const CURADOR = new URLSearchParams(window.location.search).get('curador') === '1';
+        const CAMPOS_CURADOR = [
+            ['nombre_low', 'Nombre cotidiano (LOW)', 'input'], ['resumen_low', 'Resumen cotidiano (LOW)', 'area'],
+            ['nombre', 'Nombre (MED)', 'input'], ['nombre_high', 'Nombre profundo (HIGH)', 'input'],
+            ['alias', 'Alias (separados por coma)', 'input'], ['evaluacion', 'Evaluación', 'area'], ['senales', 'Señales corporales', 'area'],
+            ['impulso', 'Impulso', 'area'], ['pensamientos', 'Pensamientos', 'area'], ['regula', 'Regulación', 'area'], ['reencuadra', 'Reencuadre', 'area'],
+            ['acomp_validar', 'Acompañar: validar', 'area'], ['acomp_evitar', 'Acompañar: evitar', 'area'], ['examen', 'Examen / discernimiento', 'area']
+        ];
+        const LIMITE = 6.5;
+        const CUBOS = [
+            { s: 2.2, c: 0x22c55e, o: 0.06, nombre: "Sutil (±1.5)" },
+            { s: 4.2, c: 0x3b82f6, o: 0.04, nombre: "Moderado (±3.5)" },
+            { s: 6.0, c: 0xef4444, o: 0.025, nombre: "Desbordante (±5.5)" }
+        ];
+        const NIVEL_LABEL = { basal: "EQUILIBRIO BASAL", sutil: "SUTIL (1.5)", moderado: "MODERADO (3.5)", desbordante: "DESBORDANTE (5.5)" };
+        const PIN_COLORS = ['#fbbf24', '#f43f5e', '#10b981', '#3b82f6', '#a855f7', '#f8fafc'];
+
+        const CUADERNOS = [
+            { id: 'personal', nombre: 'Personal (Mi Examen)', icono: 'UserCheck', desc: 'Espacio privado para tu autoevaluación y examen de conciencia.' },
+            { id: 'taller', nombre: 'Modo Taller / Consulta Limpia', icono: 'Sparkles', desc: 'Espacio limpio para mostrar o trabajar con jóvenes y grupos sin exponer tus notas.' },
+            { id: 'acompanamiento', nombre: 'Acompañamiento / Casos', icono: 'HeartHandshake', desc: 'Espacio para registrar itinerarios de acompañados (usa pseudónimos o códigos).' }
+        ];
+
+        const RUEDA_NIVELES = [
+            { id: 'low', num: 1, tag: 'LOW', titulo: 'Cotidiano / Joven', sub: '27 emociones base · Lenguaje directo', color: 'emerald' },
+            { id: 'medium', num: 2, tag: 'MED', titulo: 'Matices y Acompañante', sub: '79 nodos · Scherer + Escuela Acompañamiento', color: 'blue' },
+            { id: 'high', num: 3, tag: 'HIGH', titulo: 'Profundo / Examen', sub: 'Discernimiento interior y eco espiritual', color: 'purple' }
+        ];
+
+        const dist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+        const clamp = (v) => Math.max(-LIMITE, Math.min(LIMITE, v));
+        const fmtFecha = (ts) => ts ? new Date(ts).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' }) : "";
+        const hoyISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+
+        const leerLS = (k, def) => { try { const v = window.localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch (e) { return def; } };
+        const escribirLS = (k, v) => { try { window.localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+        const normalizarPin = (p) => { const t = typeof p.id === 'number' ? p.id : Date.now(); return { ...p, descripcion: p.descripcion || "", visible: p.visible !== false, createdAt: p.createdAt || t, updatedAt: p.updatedAt || p.createdAt || t }; };
+        const fusionarPorId = (act, ent) => { const m = new Map(act.map(o => [o.id, o])); ent.forEach(o => m.set(o.id, o)); return [...m.values()]; };
+
+        // Migración única de las notas de la versión 3.2 (claves ruler_*) al cuaderno Personal. No borra las claves antiguas.
+        (() => {
+            if (leerLS('e3d_migrado_32', false)) return;
+            const viejos = leerLS('ruler_pins', null);
+            if (Array.isArray(viejos) && viejos.length) {
+                ['pins', 'paths', 'views'].forEach(t => {
+                    const ant = leerLS('ruler_' + t, []); const act = leerLS('ruler4_personal_' + t, []);
+                    if (Array.isArray(ant) && Array.isArray(act)) escribirLS('ruler4_personal_' + t, fusionarPorId(ant, act));
+                });
+                escribirLS('ruler4_personal_last_change', Date.now());
+            }
+            escribirLS('e3d_migrado_32', true);
+        })();
+        // Pide al navegador que no borre estos datos por falta de espacio (puede ignorarlo).
+        try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
+
+        // Cifrado AES-GCM en navegador (Web Crypto API) para custodia de exportaciones y PIN
+        async function derivarClave(pass, salt) {
+            const enc = new TextEncoder();
+            const keyMaterial = await window.crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
+            return window.crypto.subtle.deriveKey(
+                { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
+                keyMaterial,
+                { name: "AES-GCM", length: 256 },
+                false,
+                ["encrypt", "decrypt"]
+            );
+        }
+        async function cifrarTexto(plainText, pass) {
+            const salt = window.crypto.getRandomValues(new Uint8Array(16));
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const key = await derivarClave(pass, salt);
+            const enc = new TextEncoder();
+            const cipherBuf = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plainText));
+            const toB64 = (u8) => { let t = ''; for (let i = 0; i < u8.length; i += 8192) t += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(t); };
+            return JSON.stringify({ rulerEncrypted: true, v: "5.0", salt: toB64(salt), iv: toB64(iv), data: toB64(new Uint8Array(cipherBuf)) });
+        }
+        async function descifrarTexto(jsonStr, pass) {
+            const payload = JSON.parse(jsonStr);
+            const fromB64 = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const key = await derivarClave(pass, fromB64(payload.salt));
+            const plainBuf = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(payload.iv) }, key, fromB64(payload.data));
+            return new TextDecoder().decode(plainBuf);
+        }
+
+        const makeTextSprite = (text, opts = {}) => {
+            const { font = 'Bold 30px sans-serif', color = '#ffffff', canvasWidth = 512, maxWidth = canvasWidth - 40, lineHeight = 36, worldWidth = 3, maxLines = 3, alpha = 1, depthTest = false, sub = '', subFont = '26px sans-serif', subAlpha = 0.6, subHeight = 34 } = opts;
+            const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
+            ctx.font = font;
+            const words = String(text || "").split(/\s+/); const lines = []; let cur = "";
+            words.forEach(w => { const t = cur ? cur + " " + w : w; if (ctx.measureText(t).width > maxWidth && cur) { lines.push(cur); cur = w; } else cur = t; });
+            if (cur) lines.push(cur);
+            if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] = lines[maxLines - 1].replace(/\s*\S*$/, "") + "…"; }
+            canvas.width = canvasWidth; canvas.height = Math.max(48, lines.length * lineHeight + 14) + (sub ? subHeight : 0);
+            ctx.font = font; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.globalAlpha = alpha;
+            ctx.strokeStyle = '#020617'; ctx.lineWidth = 7; ctx.lineJoin = 'round';   // contorno oscuro: el texto se lee aunque se cruce con otro
+            lines.forEach((l, i) => { const yy = 7 + lineHeight / 2 + i * lineHeight; ctx.strokeText(l, canvasWidth / 2, yy); ctx.fillText(l, canvasWidth / 2, yy); });
+            // Segunda línea opcional, más pequeña y tenue (dato de apoyo bajo el texto principal)
+            if (sub) { const ys = 7 + lines.length * lineHeight + subHeight / 2 - 2; ctx.font = subFont; ctx.globalAlpha = alpha * subAlpha; ctx.lineWidth = 5; ctx.strokeText(sub, canvasWidth / 2, ys); ctx.fillText(sub, canvasWidth / 2, ys); }
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest, transparent: true }));
+            sprite.scale.set(worldWidth, worldWidth * canvas.height / canvas.width, 1);
+            return sprite;
+        };
+
+        const vaciarGrupo = (group) => {
+            while (group.children.length > 0) {
+                const child = group.children[0]; group.remove(child);
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) { if (child.material.map) child.material.map.dispose(); child.material.dispose(); }
+            }
+        };
+
+        const descargar = (nombre, contenido) => {
+            const blob = new Blob([contenido], { type: 'application/json;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+
+        const App = () => {
+            const mountRef = useRef(null);
+            const markerRef = useRef(null);
+            const pinsGroupRef = useRef(null);
+            const pathsGroupRef = useRef(null);
+            const gridGroupRef = useRef(null);
+            const sysLabelsGroupRef = useRef(null);
+            const fileInputRef = useRef(null);
+            const sidebarScrollRef = useRef(null);
+
+            const glosario = window.__GLOSARIO__;
+            const [glosarioEdits, setGlosarioEdits] = useState(() => leerLS('e3d_glosario_edits', {}));
+            useEffect(() => { escribirLS('e3d_glosario_edits', glosarioEdits); }, [glosarioEdits]);
+            const nodos = useMemo(() => glosario.nodos.map(n => glosarioEdits[n.id] ? { ...n, ...glosarioEdits[n.id] } : n), [glosario, glosarioEdits]);
+
+            // Rueda de Afinado: 'low' | 'medium' | 'high'
+            const [ruedaNivel, setRuedaNivel] = useState(() => leerLS('ruler4_rueda', 'medium'));
+            // Cuaderno activo: 'personal' | 'taller' | 'acompanamiento'
+            const [cuaderno, setCuaderno] = useState(() => leerLS('ruler4_cuaderno', 'personal'));
+            // Modo Privacidad Rápida (oculta notas al instante)
+            const [modoPrivado, setModoPrivado] = useState(false);
+
+            const [markerPos, setMarkerPos] = useState({ x: 0, y: 0, z: 0 });
+            const [coordInputs, setCoordInputs] = useState({ x: "0.00", y: "0.00", z: "0.00" });
+
+            const [activeStep, setActiveStep] = useState('label'); // 'label' | 'guide' | 'acomp' | 'notes'
+            const [searchTerm, setSearchTerm] = useState("");
+            const [showSearchMobile, setShowSearchMobile] = useState(false);
+            const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
+
+            // Almacenamiento separado por cuaderno
+            const lsKey = (tipo) => `ruler4_${cuaderno}_${tipo}`;
+            const [savedPins, setSavedPins] = useState(() => leerLS(`ruler4_${cuaderno}_pins`, []).map(normalizarPin));
+            const [savedPaths, setSavedPaths] = useState(() => leerLS(`ruler4_${cuaderno}_paths`, []));
+            const [savedViews, setSavedViews] = useState(() => leerLS(`ruler4_${cuaderno}_views`, []));
+
+            const [lastExport, setLastExport] = useState(() => leerLS(`ruler4_${cuaderno}_last_export`, null));
+            const [lastChange, setLastChange] = useState(() => leerLS(`ruler4_${cuaderno}_last_change`, null));
+
+            // Cambio de cuaderno en un solo paso: el estado y la clave de guardado nunca quedan desparejados.
+            const cambiarCuaderno = (id) => {
+                escribirLS('ruler4_cuaderno', id);
+                setCuaderno(id);
+                setSavedPins(leerLS(`ruler4_${id}_pins`, []).map(normalizarPin));
+                setSavedPaths(leerLS(`ruler4_${id}_paths`, []));
+                setSavedViews(leerLS(`ruler4_${id}_views`, []));
+                setLastExport(leerLS(`ruler4_${id}_last_export`, null));
+                setLastChange(leerLS(`ruler4_${id}_last_change`, null));
+            };
+            // Guarda solo si el contenido cambió de verdad, y entonces anota la fecha del cambio (para el recordatorio de respaldo).
+            const persistir = (tipo, valor) => {
+                const k = lsKey(tipo); const nuevo = JSON.stringify(valor);
+                let previo = null; try { previo = window.localStorage.getItem(k); } catch (e) {}
+                if ((previo || '[]') === nuevo) return;
+                try { window.localStorage.setItem(k, nuevo); } catch (e) { return; }
+                const ahora = Date.now(); escribirLS(lsKey('last_change'), ahora); setLastChange(ahora);
+            };
+
+            useEffect(() => { escribirLS('ruler4_rueda', ruedaNivel); }, [ruedaNivel]);
+            useEffect(() => { persistir('pins', savedPins); }, [savedPins, cuaderno]);
+            useEffect(() => { persistir('paths', savedPaths); }, [savedPaths, cuaderno]);
+            useEffect(() => { persistir('views', savedViews); }, [savedViews, cuaderno]);
+
+            const marcarExportado = () => { const ahora = Date.now(); escribirLS(lsKey('last_export'), ahora); setLastExport(ahora); };
+            const necesitaRespaldo = useMemo(() => {
+                if (cuaderno === 'taller' || !savedPins.length || !lastChange) return false;
+                if (lastExport && lastChange <= lastExport) return false;
+                const desde = lastExport || Math.min(...savedPins.map(p => p.createdAt || Date.now()));
+                return (Date.now() - desde) > DIAS_RECORDATORIO * 86400000;
+            }, [savedPins, lastChange, lastExport, cuaderno]);
+
+            const [showGrid, setShowGrid] = useState(true);
+            const [showSystemLabels, setShowSystemLabels] = useState(false);
+
+            // Modales
+            const [showModal, setShowModal] = useState(false);
+            const [newNoteText, setNewNoteText] = useState("");
+            const [newNoteDesc, setNewNoteDesc] = useState("");
+            const [newNoteColor, setNewNoteColor] = useState(PIN_COLORS[0]);
+            const [editingPinId, setEditingPinId] = useState(null);
+
+            const [showPathModal, setShowPathModal] = useState(false);
+            const [newPathName, setNewPathName] = useState("");
+            const [newPathColor, setNewPathColor] = useState(PIN_COLORS[3]);
+            const [pathSequence, setPathSequence] = useState([]);
+            const [editingPathId, setEditingPathId] = useState(null);
+
+            const [showCryptoModal, setShowCryptoModal] = useState(false);
+            const [cryptoPass, setCryptoPass] = useState("");
+            const [cryptoMode, setCryptoMode] = useState("export"); // 'export' | 'import'
+            const [pendingEncryptedRaw, setPendingEncryptedRaw] = useState("");
+            const [cryptoError, setCryptoError] = useState("");
+
+            const [showAbout, setShowAbout] = useState(false);
+            const [pendingImport, setPendingImport] = useState(null);
+            const [importError, setImportError] = useState("");
+            const [showCuradorModal, setShowCuradorModal] = useState(false);
+            const [curadorForm, setCuradorForm] = useState(null);
+
+            useEffect(() => {
+                const activeTag = document.activeElement?.tagName;
+                const isInputFocused = activeTag === 'INPUT' && document.activeElement?.classList.contains('coord-input');
+                if (!isInputFocused) setCoordInputs({ x: markerPos.x.toFixed(1), y: markerPos.y.toFixed(1), z: markerPos.z.toFixed(1) });
+            }, [markerPos]);
+
+            useEffect(() => { if (gridGroupRef.current) gridGroupRef.current.visible = showGrid; }, [showGrid]);
+            useEffect(() => { if (sysLabelsGroupRef.current) sysLabelsGroupRef.current.visible = showSystemLabels; }, [showSystemLabels]);
+
+            const setMarker = (x, y, z) => {
+                const p = { x: clamp(x), y: clamp(y), z: clamp(z) };
+                if (markerRef.current) markerRef.current.position.set(p.x, p.y, p.z);
+                setMarkerPos(p);
+            };
+
+            // Nodos visibles según el nivel de la Rueda de Afinado
+            const nodosActivos = useMemo(() => {
+                if (ruedaNivel === 'low') return nodos.filter(n => n.es_anclaje_low);
+                return nodos;
+            }, [nodos, ruedaNivel]);
+
+            // Interpretación en vivo según coordenada y Rueda de Afinado
+            const interpretation = useMemo(() => {
+                const { x, y, z } = markerPos;
+                const dCentro = Math.sqrt(x * x + y * y + z * z);
+                if (dCentro < 0.75) {
+                    const basal = nodos[0];
+                    return {
+                        perfil: basal,
+                        titulo: ruedaNivel === 'low' ? basal.nombre_low : ruedaNivel === 'high' ? basal.nombre_high : basal.nombre,
+                        subtitulo: basal.nombre,
+                        vectorNodos: [basal],
+                        alternativas: nodos.filter(n => n.nivel === 'sutil').slice(0, 4)
+                    };
+                }
+                const pool = ruedaNivel === 'low' ? nodos.filter(n => n.es_anclaje_low && n.nivel !== 'basal') : nodos.filter(n => n.nivel !== 'basal');
+                const orden = pool.map(n => ({ n, d: dist(n, markerPos) })).sort((a, b) => a.d - b.d);
+                const perfil = orden[0].n;
+                const alternativas = orden.slice(1, 4).map(o => o.n);
+
+                // Encontrar los 3 grados del mismo vector radial (Sutil 1.5 -> Moderado 3.5 -> Desbordante 5.5)
+                const vectorNodos = perfil.dir
+                    ? nodos.filter(n => n.dir && n.dir[0] === perfil.dir[0] && n.dir[1] === perfil.dir[1] && n.dir[2] === perfil.dir[2])
+                    : [perfil];
+
+                const titulo = ruedaNivel === 'low' ? perfil.nombre_low : perfil.nombre;
+                const subtitulo = ruedaNivel === 'high' ? perfil.nombre_high : perfil.familia;
+
+                return { perfil, titulo, subtitulo, vectorNodos, alternativas };
+            }, [markerPos, nodos, ruedaNivel]);
+
+            // Búsqueda inteligente en nombres, nombres_low, nombres_high, alias y notas
+            const handleSearch = (e) => {
+                e.preventDefault();
+                const term = searchTerm.toLowerCase().trim();
+                if (!term) return;
+                const foundPin = savedPins.find(p => p.text.toLowerCase().includes(term));
+                if (foundPin && !modoPrivado) {
+                    setMarker(foundPin.x, foundPin.y, foundPin.z);
+                    setActiveStep('notes');
+                    if (!isSidebarOpen) setIsSidebarOpen(true);
+                    setSearchTerm(""); setShowSearchMobile(false);
+                    return;
+                }
+                // Orden de preferencia: el nombre empieza por el término, el nombre lo contiene, nombres LOW/HIGH, y por último alias.
+                const sinAcentos = (t) => String(t || "").toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                const q = sinAcentos(term);
+                const foundEmo = nodos.find(n => sinAcentos(n.nombre).startsWith(q))
+                    || nodos.find(n => sinAcentos(n.nombre).includes(q))
+                    || nodos.find(n => sinAcentos(n.nombre_low).includes(q) || sinAcentos(n.nombre_high).includes(q))
+                    || nodos.find(n => (n.alias || []).some(a => sinAcentos(a) === q))
+                    || nodos.find(n => (n.alias || []).some(a => sinAcentos(a).includes(q)));
+                if (foundEmo) {
+                    setMarker(foundEmo.x, foundEmo.y, foundEmo.z);
+                    setActiveStep('label');
+                    if (!isSidebarOpen) setIsSidebarOpen(true);
+                }
+                setSearchTerm(""); setShowSearchMobile(false);
+            };
+
+            // Gestión de Pines y Rutas
+            const openSaveModal = (prefill) => {
+                setEditingPinId(null);
+                setNewNoteText(prefill?.text || "");
+                setNewNoteDesc(prefill?.descripcion || "");
+                setNewNoteColor(prefill?.color || PIN_COLORS[0]);
+                setShowModal(true);
+            };
+            const hacerloMio = () => {
+                const p = interpretation.perfil;
+                if (!p) return;
+                setMarker(p.x, p.y, p.z);
+                openSaveModal({ text: ruedaNivel === 'low' ? p.nombre_low : p.nombre });
+            };
+            const handleSaveNote = () => {
+                if (!newNoteText.trim()) return;
+                const ahora = Date.now();
+                if (editingPinId) {
+                    setSavedPins(prev => prev.map(pin => pin.id === editingPinId ? { ...pin, text: newNoteText.trim(), descripcion: newNoteDesc.trim(), x: markerPos.x, y: markerPos.y, z: markerPos.z, color: newNoteColor, updatedAt: ahora } : pin));
+                } else {
+                    setSavedPins(prev => [...prev, { id: ahora, text: newNoteText.trim(), descripcion: newNoteDesc.trim(), x: markerPos.x, y: markerPos.y, z: markerPos.z, color: newNoteColor, visible: true, createdAt: ahora, updatedAt: ahora }]);
+                }
+                setNewNoteText(""); setNewNoteDesc(""); setEditingPinId(null); setShowModal(false); setActiveStep('notes');
+                if (!isSidebarOpen) setIsSidebarOpen(true);
+            };
+            const deletePin = (id) => {
+                setSavedPins(prev => prev.filter(p => p.id !== id));
+                setSavedPaths(prev => prev.map(pa => ({ ...pa, pinIds: pa.pinIds.filter(pid => pid !== id) })).filter(pa => pa.pinIds.length >= 2));
+            };
+            const editPin = (pin) => {
+                setEditingPinId(pin.id); setNewNoteText(pin.text); setNewNoteDesc(pin.descripcion || ""); setNewNoteColor(pin.color || PIN_COLORS[0]);
+                setMarker(pin.x, pin.y, pin.z); setShowModal(true);
+            };
+
+            const handleSavePath = () => {
+                if (!newPathName.trim() || pathSequence.length < 2) return;
+                if (editingPathId) {
+                    setSavedPaths(prev => prev.map(pa => pa.id === editingPathId ? { ...pa, name: newPathName.trim(), pinIds: pathSequence, color: newPathColor } : pa));
+                } else {
+                    setSavedPaths(prev => [...prev, { id: Date.now(), name: newPathName.trim(), pinIds: pathSequence, color: newPathColor, visible: true }]);
+                }
+                setNewPathName(""); setPathSequence([]); setEditingPathId(null); setShowPathModal(false); setActiveStep('notes');
+            };
+
+            // Exportar / Importar (Plano o Cifrado con PIN AES-GCM)
+            const exportPlano = () => {
+                const data = { app: APP_NOMBRE, version: APP_VERSION, cuaderno, exportedAt: new Date().toISOString(), glosarioVersion: glosario.version, pins: savedPins, paths: savedPaths, views: savedViews };
+                descargar(`Emociones3D_${cuaderno}_${hoyISO()}.json`, JSON.stringify(data, null, 2));
+                marcarExportado();
+            };
+            const iniciarExportCifrado = () => {
+                setCryptoMode("export"); setCryptoPass(""); setCryptoError(""); setShowCryptoModal(true);
+            };
+            const confirmarCryptoModal = async () => {
+                if (!cryptoPass || cryptoPass.length < 4) {
+                    setCryptoError("Ingresa un PIN o clave de al menos 4 caracteres.");
+                    return;
+                }
+                if (cryptoMode === "export") {
+                    const data = JSON.stringify({ app: APP_NOMBRE, version: APP_VERSION, cuaderno, exportedAt: new Date().toISOString(), glosarioVersion: glosario.version, pins: savedPins, paths: savedPaths, views: savedViews });
+                    try {
+                        const encrypted = await cifrarTexto(data, cryptoPass);
+                        descargar(`Emociones3D_${cuaderno}_${hoyISO()}.ruler`, encrypted);
+                        marcarExportado();
+                        setShowCryptoModal(false); setCryptoPass("");
+                    } catch (e) { setCryptoError("No se pudo cifrar el archivo en este navegador."); }
+                } else {
+                    try {
+                        const decryptedStr = await descifrarTexto(pendingEncryptedRaw, cryptoPass);
+                        const parsed = JSON.parse(decryptedStr);
+                        setShowCryptoModal(false); setCryptoPass(""); setPendingEncryptedRaw("");
+                        prepararImport(parsed);
+                    } catch (e) {
+                        setCryptoError("Clave o PIN incorrecto. No se pudo abrir el archivo custodiado.");
+                    }
+                }
+            };
+            // Importar: nunca se aplica directamente; primero se pregunta si fusionar o reemplazar.
+            const prepararImport = (parsed) => {
+                const pins = Array.isArray(parsed) ? parsed : parsed && parsed.pins;
+                if (!Array.isArray(pins)) { setImportError("El archivo no contiene notas de Emociones 3D."); return; }
+                setImportError("");
+                setPendingImport({ pins: pins.map(normalizarPin), paths: (!Array.isArray(parsed) && parsed.paths) || [], views: (!Array.isArray(parsed) && parsed.views) || [], exportedAt: parsed.exportedAt || null, cuadernoOrigen: parsed.cuaderno || null });
+            };
+            const aplicarImport = (modo) => {
+                const imp = pendingImport; if (!imp) return;
+                if (modo === 'fusionar') {
+                    setSavedPins(prev => fusionarPorId(prev, imp.pins)); setSavedPaths(prev => fusionarPorId(prev, imp.paths)); setSavedViews(prev => fusionarPorId(prev, imp.views));
+                } else { setSavedPins(imp.pins); setSavedPaths(imp.paths); setSavedViews(imp.views); }
+                setPendingImport(null); setActiveStep('notes');
+            };
+
+            // Modo curador (?curador=1): editar el perfil del nodo actual y exportar glosario.json
+            const abrirCurador = () => {
+                const n = interpretation.perfil; if (!n) return;
+                const f = { id: n.id }; CAMPOS_CURADOR.forEach(([k]) => { f[k] = k === 'alias' ? (n.alias || []).join(', ') : (n[k] || ""); });
+                setCuradorForm(f); setShowCuradorModal(true);
+            };
+            const guardarCurador = () => {
+                if (!curadorForm || !curadorForm.nombre.trim()) return;
+                const { id, alias, ...resto } = curadorForm;
+                Object.keys(resto).forEach(k => { resto[k] = resto[k].trim(); });
+                setGlosarioEdits(prev => ({ ...prev, [id]: { ...resto, alias: alias.split(',').map(a => a.trim()).filter(Boolean) } }));
+                setShowCuradorModal(false);
+            };
+            const exportarGlosario = () => {
+                descargar('glosario.json', JSON.stringify({ ...glosario, fecha: hoyISO(), nodos }, null, 2) + '\n');
+            };
+
+            const importData = (event) => {
+                const file = event.target.files[0]; event.target.value = "";
+                if (!file) return;
+                const fr = new FileReader();
+                fr.onload = e => {
+                    try {
+                        const raw = e.target.result;
+                        const parsed = JSON.parse(raw);
+                        if (parsed.rulerEncrypted) {
+                            setPendingEncryptedRaw(raw);
+                            setCryptoMode("import"); setCryptoPass(""); setCryptoError("");
+                            setShowCryptoModal(true);
+                            return;
+                        }
+                        prepararImport(parsed);
+                    } catch (err) {
+                        setImportError("El archivo seleccionado no tiene un formato válido.");
+                    }
+                };
+                fr.readAsText(file);
+            };
+
+            // Escena Three.js
+            useEffect(() => {
+                const width = mountRef.current.clientWidth;
+                const height = mountRef.current.clientHeight;
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x020617);
+                const camera = new THREE.PerspectiveCamera(58, width / height, 0.1, 1000);
+                camera.position.set(14.5, 12.5, 14.5);
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.setSize(width, height);
+                mountRef.current.appendChild(renderer.domElement);
+
+                const orbit = new OrbitControls(camera, renderer.domElement);
+                orbit.enableDamping = true;
+
+                scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+                dirLight.position.set(12, 20, 15);
+                scene.add(dirLight);
+                const fillLight = new THREE.DirectionalLight(0x88ccff, 0.5);
+                fillLight.position.set(-12, -10, -15);
+                scene.add(fillLight);
+
+                // Rótulo de eje en dos líneas: arriba la vivencia; debajo, pequeño y tenue, el código del eje y el neurotransmisor.
+                const ejeSprites = [];
+                const ejeLabel = (text, sub, pos, color) => {
+                    const s = makeTextSprite(text, { font: 'Bold 40px sans-serif', color, canvasWidth: 640, lineHeight: 46, worldWidth: 5.2, maxLines: 1, depthTest: true, sub, subFont: '30px sans-serif', subAlpha: 0.75, subHeight: 40 });
+                    s.userData = { bx: s.scale.x, by: s.scale.y };
+                    s.position.copy(pos);
+                    scene.add(s); ejeSprites.push(s);
+                };
+                const L = LIMITE + 1.5;
+                ejeLabel("BIENESTAR / AGRADO", "+X · Serotonina", new THREE.Vector3(L, 0, 0), "#4ade80");
+                ejeLabel("MALESTAR / DESAGRADO", "−X · Serotonina", new THREE.Vector3(-L, 0, 0), "#f87171");
+                ejeLabel("ENERGÍA / ALERTA", "+Y · Noradrenalina", new THREE.Vector3(0, L, 0), "#fbbf24");
+                ejeLabel("CALMA / REPOSO", "−Y · Noradrenalina", new THREE.Vector3(0, -L, 0), "#60a5fa");
+                ejeLabel("ABRIRME / IR HACIA", "+Z · Dopamina", new THREE.Vector3(0, 0, L), "#c084fc");
+                ejeLabel("CERRARME / EVITAR", "−Z · Dopamina", new THREE.Vector3(0, 0, -L), "#fb923c");
+
+                const axes = new THREE.Group();
+                const A = LIMITE + 0.4;
+                const createAxis = (pts, color) => new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.38 }));
+                axes.add(createAxis([new THREE.Vector3(-A, 0, 0), new THREE.Vector3(A, 0, 0)], 0x22c55e));
+                axes.add(createAxis([new THREE.Vector3(0, -A, 0), new THREE.Vector3(0, A, 0)], 0xfbbf24));
+                axes.add(createAxis([new THREE.Vector3(0, 0, -A), new THREE.Vector3(0, 0, A)], 0xa855f7));
+                scene.add(axes);
+
+                CUBOS.forEach(l => {
+                    const geom = new THREE.BoxGeometry(l.s * 2, l.s * 2, l.s * 2);
+                    scene.add(new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: l.c, transparent: true, opacity: l.o, side: THREE.DoubleSide, depthWrite: false })));
+                    scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(geom), new THREE.LineBasicMaterial({ color: l.c, transparent: true, opacity: l.o * 4.5 })));
+                });
+
+                const gridGroup = new THREE.Group();
+                scene.add(gridGroup);
+                gridGroupRef.current = gridGroup;
+
+                const sysLabelsGroup = new THREE.Group();
+                sysLabelsGroup.visible = false;
+                scene.add(sysLabelsGroup);
+                sysLabelsGroupRef.current = sysLabelsGroup;
+
+                const pinsGroup = new THREE.Group();
+                scene.add(pinsGroup);
+                pinsGroupRef.current = pinsGroup;
+
+                const pathsGroup = new THREE.Group();
+                scene.add(pathsGroup);
+                pathsGroupRef.current = pathsGroup;
+
+                // Esfera principal con volumen tipo planeta (sombreado físico)
+                const marker = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.48, 32, 32),
+                    new THREE.MeshPhysicalMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.25, roughness: 0.2, metalness: 0.1, clearcoat: 1.0, transparent: true, opacity: 0.82 })
+                );
+                const crosshairGeom = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(-0.85, 0, 0), new THREE.Vector3(0.85, 0, 0),
+                    new THREE.Vector3(0, -0.85, 0), new THREE.Vector3(0, 0.85, 0),
+                    new THREE.Vector3(0, 0, -0.85), new THREE.Vector3(0, 0, 0.85)
+                ]);
+                const crosshair = new THREE.LineSegments(crosshairGeom, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 }));
+                crosshair.raycast = () => {};
+                marker.add(crosshair);
+                scene.add(marker);
+                markerRef.current = marker;
+
+                const drag = new DragControls([marker], camera, renderer.domElement);
+                const lim = new THREE.Vector3(LIMITE, LIMITE, LIMITE);
+                drag.addEventListener('drag', (e) => {
+                    e.object.position.clamp(lim.clone().negate(), lim);
+                    setMarkerPos({ x: e.object.position.x, y: e.object.position.y, z: e.object.position.z });
+                });
+                drag.addEventListener('dragstart', () => orbit.enabled = false);
+                drag.addEventListener('dragend', () => orbit.enabled = true);
+
+                let rafId;
+                const animate = () => {
+                    rafId = requestAnimationFrame(animate); orbit.update();
+                    // Al acercar la cámara, los rótulos de eje se encogen para no competir con las emociones.
+                    ejeSprites.forEach(sp => { const k = Math.max(0.5, Math.min(1, camera.position.distanceTo(sp.position) / 24)); sp.scale.set(sp.userData.bx * k, sp.userData.by * k, 1); });
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                const resizeObserver = new ResizeObserver(entries => {
+                    for (let entry of entries) {
+                        const { width, height } = entry.contentRect;
+                        if (width > 0 && height > 0) {
+                            camera.aspect = width / height;
+                            camera.updateProjectionMatrix();
+                            renderer.setSize(width, height);
+                        }
+                    }
+                });
+                if (mountRef.current) resizeObserver.observe(mountRef.current);
+                return () => { cancelAnimationFrame(rafId); resizeObserver.disconnect(); drag.dispose(); orbit.dispose(); renderer.dispose(); };
+            }, []);
+
+            // Actualizar puntos de la malla y etiquetas según el nivel de la Rueda de Afinado (Low = 27, Med/High = 79)
+            useEffect(() => {
+                const gridGroup = gridGroupRef.current;
+                const labelsGroup = sysLabelsGroupRef.current;
+                if (!gridGroup || !labelsGroup) return;
+                vaciarGrupo(gridGroup);
+                vaciarGrupo(labelsGroup);
+
+                nodosActivos.forEach(n => {
+                    const radius = ruedaNivel === 'low' ? 0.11 : (n.nivel === 'sutil' ? 0.06 : n.nivel === 'moderado' ? 0.08 : 0.1);
+                    const col = n.x > 0 ? 0x4ade80 : n.x < 0 ? 0xf87171 : 0x94a3b8;
+                    const dot = new THREE.Mesh(
+                        new THREE.SphereGeometry(radius, 12, 12),
+                        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: ruedaNivel === 'low' ? 0.65 : 0.4 })
+                    );
+                    dot.position.set(n.x, n.y, n.z);
+                    gridGroup.add(dot);
+
+                    // Etiqueta 3D: solo el primer término del nombre (el nombre completo se lee en la ficha), en letra grande.
+                    const textoEtiqueta = (ruedaNivel === 'low' ? n.nombre_low : n.nombre).split(' / ')[0];
+                    const s = makeTextSprite(textoEtiqueta, {
+                        font: 'Bold 40px sans-serif',
+                        color: ruedaNivel === 'low' ? '#f1f5f9' : '#cbd5e1',
+                        worldWidth: ruedaNivel === 'low' ? 3.2 : 2.8,
+                        lineHeight: 46,
+                        maxLines: 2
+                    });
+                    s.userData = { nodo: n, bx: s.scale.x, by: s.scale.y };
+                    s.position.set(n.x, n.y + 0.22 + s.scale.y / 2, n.z);
+                    labelsGroup.add(s);
+                });
+            }, [nodosActivos, ruedaNivel]);
+
+            // Etiquetas cercanas a la esfera: más grandes, nítidas y por delante; las lejanas, pequeñas y tenues.
+            useEffect(() => {
+                const labelsGroup = sysLabelsGroupRef.current;
+                if (!labelsGroup || !showSystemLabels) return;
+                let masCercana = null, dMin = Infinity;
+                labelsGroup.children.forEach(s => { if (!s.userData.nodo) return; const d = dist(s.userData.nodo, markerPos); if (d < dMin) { dMin = d; masCercana = s; } });
+                labelsGroup.children.forEach(s => {
+                    const n = s.userData.nodo; if (!n) return;
+                    const d = dist(n, markerPos);
+                    const t = Math.max(0, Math.min(1, (d - 1) / 5));       // 0 = junto a la esfera, 1 = a 6 o más
+                    const esLaMasCercana = s === masCercana;
+                    // Los nodos exteriores están más separados y admiten letra mayor; los del cubo sutil van juntos y la llevan menor.
+                    const porNivel = ruedaNivel === 'low' ? 1.5 : ({ sutil: 0.8, moderado: 1.1, desbordante: 1.45 }[n.nivel] || 0.8);
+                    const f = esLaMasCercana ? Math.max(1.8, porNivel * 1.3) : porNivel * (1.15 - 0.4 * t);
+                    s.scale.set(s.userData.bx * f, s.userData.by * f, 1);
+                    s.position.y = n.y + 0.22 + s.scale.y / 2;
+                    s.material.opacity = esLaMasCercana ? 1 : 0.9 - 0.5 * t;
+                    s.renderOrder = esLaMasCercana ? 200 : Math.round(100 - d * 5);
+                });
+            }, [markerPos, nodosActivos, ruedaNivel, showSystemLabels]);
+
+            // Actualizar Pines 3D (respeta modoPrivado)
+            useEffect(() => {
+                const group = pinsGroupRef.current;
+                if (!group) return;
+                vaciarGrupo(group);
+                if (modoPrivado) return;
+                savedPins.forEach(pin => {
+                    if (pin.visible === false) return;
+                    const pinColor = pin.color || '#fbbf24';
+                    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.16, 24, 24), new THREE.MeshPhysicalMaterial({ color: pinColor, metalness: 0.2, roughness: 0.2, clearcoat: 1.0 }));
+                    mesh.position.set(pin.x, pin.y, pin.z);
+                    group.add(mesh);
+                    const s = makeTextSprite(pin.text, { font: 'Bold 28px sans-serif', color: pinColor, worldWidth: 2.8, lineHeight: 34, maxLines: 2 });
+                    s.position.set(pin.x, pin.y + 0.28 + s.scale.y / 2, pin.z);
+                    group.add(s);
+                });
+            }, [savedPins, modoPrivado]);
+
+            // Actualizar Trayectorias 3D (respeta modoPrivado)
+            useEffect(() => {
+                const group = pathsGroupRef.current;
+                if (!group) return;
+                vaciarGrupo(group);
+                if (modoPrivado) return;
+                savedPaths.forEach(path => {
+                    if (path.visible === false) return;
+                    const points = path.pinIds.map(id => { const pin = savedPins.find(p => p.id === id); return pin ? new THREE.Vector3(pin.x, pin.y, pin.z) : null; }).filter(Boolean);
+                    if (points.length >= 2) {
+                        const curve = new THREE.CatmullRomCurve3(points);
+                        const tubeMesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.045, 8, false), new THREE.MeshPhysicalMaterial({ color: path.color, transmission: 0.4, opacity: 0.85, transparent: true }));
+                        group.add(tubeMesh);
+                    }
+                });
+            }, [savedPaths, savedPins, modoPrivado]);
+
+            const p = interpretation.perfil;
+            const ruedaInfo = RUEDA_NIVELES.find(r => r.id === ruedaNivel);
+
+            return html`
+                <div className="flex h-[100dvh] overflow-hidden w-full relative bg-slate-950">
+                    <!-- PANEL LATERAL -->
+                    <aside className=${"glass-sidebar flex flex-col z-30 h-full transition-all duration-300 ease-in-out shadow-2xl md:shadow-none bg-[#0a0f1e] absolute top-0 left-0 w-[340px] " + (isSidebarOpen ? "translate-x-0 border-r border-slate-800" : "-translate-x-full border-transparent") + " md:relative md:w-[375px] md:translate-x-0 " + (isSidebarOpen ? "md:ml-0" : "md:-ml-[375px]")}>
+                        <div className="w-full h-full flex flex-col relative bg-[#0a0f1e]">
+                            <button onClick=${() => setIsSidebarOpen(false)} className="md:hidden absolute top-5 right-4 p-2 text-slate-400 hover:text-white bg-slate-800/50 rounded-lg"><${Lucide.X} size=${18} /></button>
+
+                            <!-- CABECERA -->
+                            <div className="p-5 border-b border-slate-800 flex-shrink-0">
+                                <div className="flex items-center justify-between">
+                                    <h1 className="text-lg font-bold tracking-widest text-blue-300 flex items-center gap-2"><${Lucide.Compass} size=${20} /> EMOCIONES 3D <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800 font-mono">${APP_VERSION.slice(0, 3)}${CURADOR ? " · CURADOR" : ""}</span></h1>
+                                </div>
+                                <p className="text-[9px] text-slate-400 mt-1 tracking-widest"><span className="font-bold text-slate-200">R</span>econocer · <span className="font-bold text-slate-200">C</span>omprender · <span className="font-bold text-slate-200">E</span>tiquetar · <span className="font-bold text-slate-200">E</span>xpresar · <span className="font-bold text-slate-200">R</span>egular</p>
+
+                                <!-- RUEDA DE AFINADO (SELECTOR HORIZONTAL EN SIDEBAR) -->
+                                <div className="mt-3 pt-3 border-t border-slate-800/80">
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <span className="text-[9px] uppercase tracking-widest font-bold text-slate-400 flex items-center gap-1"><${Lucide.Sliders} size=${11}/> Rueda de Afinado (Profundidad)</span>
+                                        <span className="text-[9px] font-mono text-blue-400">${ruedaInfo.sub.split('·')[0]}</span>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                                        ${RUEDA_NIVELES.map(r => html`
+                                            <button key=${r.id} onClick=${() => setRuedaNivel(r.id)} className=${`py-1.5 px-2 rounded-lg text-[10px] font-bold transition-all flex flex-col items-center ${ruedaNivel === r.id ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                                                <span>${r.tag}</span>
+                                                <span className="text-[8px] font-normal opacity-80">${r.id === 'low' ? 'Cotidiano' : r.id === 'medium' ? 'Acompañar' : 'Examen'}</span>
+                                            </button>
+                                        `)}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- PESTAÑAS DE NAVEGACIÓN -->
+                            <nav className="p-3 grid grid-cols-4 gap-1.5 border-b border-slate-800 flex-shrink-0">
+                                <button onClick=${() => setActiveStep('label')} className=${`flex flex-col items-center justify-center gap-1 p-2 rounded-xl text-[11px] font-medium transition-all ${activeStep === 'label' ? 'btn-active' : 'btn-inactive'}`}><${Lucide.Heart} size=${15}/> Vivencia</button>
+                                <button onClick=${() => setActiveStep('guide')} className=${`flex flex-col items-center justify-center gap-1 p-2 rounded-xl text-[11px] font-medium transition-all ${activeStep === 'guide' ? 'btn-active' : 'btn-inactive'}`}><${Lucide.SlidersHorizontal} size=${15}/> Guía 3 Ejes</button>
+                                <button onClick=${() => setActiveStep('acomp')} className=${`flex flex-col items-center justify-center gap-1 p-2 rounded-xl text-[11px] font-medium transition-all ${activeStep === 'acomp' ? 'btn-active' : 'btn-inactive'}`}><${Lucide.Users} size=${15}/> Acompañar</button>
+                                <button onClick=${() => setActiveStep('notes')} className=${`flex flex-col items-center justify-center gap-1 p-2 rounded-xl text-[11px] font-medium transition-all ${activeStep === 'notes' ? 'btn-active' : 'btn-inactive'}`}><${Lucide.Bookmark} size=${15}/> Cuaderno</button>
+                            </nav>
+
+                            <!-- CONTENIDO DINÁMICO DEL PANEL -->
+                            <div ref=${sidebarScrollRef} className="flex-grow p-5 space-y-4 overflow-y-auto custom-scrollbar">
+                                ${necesitaRespaldo && !modoPrivado ? html`
+                                    <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800 text-[11px] text-amber-200 leading-relaxed">
+                                        Este cuaderno tiene cambios sin respaldar desde hace más de ${DIAS_RECORDATORIO} días. Si el navegador borra sus datos, se perderían.
+                                        <button onClick=${() => setActiveStep('notes')} className="ml-1 underline font-bold">Ir a exportar</button>
+                                    </div>
+                                ` : null}
+                                ${activeStep === 'label' && p ? html`
+                                    <div className="space-y-4">
+                                        <!-- TARJETA PRINCIPAL DE LA EMOCIÓN -->
+                                        <div className="emotion-card p-5 text-center shadow-lg relative overflow-hidden">
+                                            <div className="text-[9px] text-blue-300 font-bold tracking-widest uppercase mb-1">${NIVEL_LABEL[p.nivel]}</div>
+                                            <div className="text-white font-bold text-xl leading-snug">${interpretation.titulo}</div>
+                                            ${ruedaNivel !== 'low' ? html`<div className="text-[11px] text-purple-300 font-medium mt-1">${interpretation.subtitulo}</div>` : null}
+                                            ${p.alias?.length ? html`<p className="text-[10px] text-slate-400 mt-2 italic">También: ${p.alias.join(" · ")}</p>` : null}
+                                        </div>
+
+                                        <!-- ESCALERA DEL VECTOR RADIAL (Sutil -> Moderado -> Desbordante) -->
+                                        ${ruedaNivel !== 'low' && interpretation.vectorNodos.length > 1 ? html`
+                                            <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                                                <p className="text-[9px] uppercase tracking-widest text-slate-400 font-bold mb-2">Gradualidad en este mismo vector</p>
+                                                <div className="grid grid-cols-3 gap-1.5">
+                                                    ${interpretation.vectorNodos.map(vn => html`
+                                                        <button key=${vn.id} onClick=${() => setMarker(vn.x, vn.y, vn.z)} className=${`p-2 rounded-lg text-center border transition-all ${vn.id === p.id ? 'bg-blue-950/80 border-blue-500 text-white font-bold' : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-white'}`}>
+                                                            <div className="text-[8px] uppercase text-slate-500">${vn.nivel}</div>
+                                                            <div className="text-[10px] leading-tight mt-0.5">${vn.nombre.split(' / ')[0]}</div>
+                                                        </button>
+                                                    `)}
+                                                </div>
+                                            </div>
+                                        ` : null}
+
+                                        <!-- DESCRIPCIÓN SEGÚN NIVEL DE LA RUEDA -->
+                                        ${ruedaNivel === 'low' ? html`
+                                            <div className="p-4 rounded-xl border border-slate-800 bg-[#0f172a] space-y-3 text-xs text-slate-200 leading-relaxed">
+                                                <p className="text-sm text-slate-100">${p.resumen_low}</p>
+                                                <div><span className="text-[9px] uppercase tracking-widest text-emerald-400 font-bold block mb-0.5">En tu cuerpo</span>${p.senales}</div>
+                                                <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-800/50 text-amber-200">
+                                                    <span className="text-[9px] uppercase tracking-widest text-amber-400 font-bold block mb-0.5">Paso práctico ahora mismo</span>
+                                                    ${p.regula}
+                                                </div>
+                                            </div>
+                                        ` : html`
+                                            <div className="p-4 rounded-xl border border-slate-800 bg-[#0f172a] space-y-3 text-xs text-slate-300 leading-relaxed">
+                                                <div><span className="text-[9px] uppercase tracking-widest text-blue-400 font-bold block mb-0.5">1. Qué evalúa la mente (Scherer)</span>${p.evaluacion}</div>
+                                                <div><span className="text-[9px] uppercase tracking-widest text-emerald-400 font-bold block mb-0.5">2. Señales en el cuerpo</span>${p.senales}</div>
+                                                <div><span className="text-[9px] uppercase tracking-widest text-purple-400 font-bold block mb-0.5">3. Impulso de acción (Eje Z)</span>${p.impulso}</div>
+                                                <div><span className="text-[9px] uppercase tracking-widest text-amber-400 font-bold block mb-0.5">4. Voz interior / Pensamiento típico</span><span className="italic text-slate-200">${p.pensamientos}</span></div>
+                                            </div>
+
+                                            <!-- REGULACIÓN Y REENCUADRE -->
+                                            <div className="p-4 rounded-xl border border-amber-900/50 bg-amber-950/20 space-y-2 text-xs">
+                                                <span className="text-[9px] uppercase tracking-widest text-amber-400 font-bold block">5. Regulación Somática y Reencuadre</span>
+                                                <p className="text-amber-100 leading-relaxed">${p.regula}</p>
+                                                <p className="text-rose-200 italic pt-1 border-t border-amber-900/40">Pregunta interior: ${p.reencuadra}</p>
+                                            </div>
+                                        `}
+
+                                        <!-- NIVEL 3 (HIGH): LECTURA ANTROPOLÓGICA Y EXAMEN DE CONCIENCIA -->
+                                        ${ruedaNivel === 'high' ? html`
+                                            <div className="p-4 rounded-xl border border-purple-800/60 bg-purple-950/25 space-y-2 text-xs">
+                                                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-purple-300 font-bold">
+                                                    <${Lucide.Sparkles} size=${13}/> Discernimiento y Examen de Conciencia
+                                                </div>
+                                                <div className="text-xs font-bold text-purple-100">${p.nombre_high}</div>
+                                                <p className="text-slate-300 leading-relaxed">${p.examen}</p>
+                                            </div>
+                                        ` : null}
+
+                                        <div className="flex gap-2">
+                                            <button onClick=${hacerloMio} className="flex-1 text-xs flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-600/20 border border-amber-500/60 text-amber-300 hover:bg-amber-600/40 hover:text-white font-semibold transition-all">
+                                                <${Lucide.MapPin} size=${14}/> Guardar en mi cuaderno
+                                            </button>
+                                            ${CURADOR ? html`<button onClick=${abrirCurador} className="text-xs flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-fuchsia-600/20 border border-fuchsia-500/60 text-fuchsia-300 hover:bg-fuchsia-600/40 hover:text-white font-semibold transition-all"><${Lucide.Edit} size=${14}/> Editar perfil</button>` : null}
+                                        </div>
+
+                                        <!-- OTRAS CERCANAS -->
+                                        ${interpretation.alternativas.length ? html`
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Emociones vecinas en el cubo</p>
+                                                <div className="space-y-1.5">
+                                                    ${interpretation.alternativas.map(a => html`
+                                                        <button key=${a.id} onClick=${() => setMarker(a.x, a.y, a.z)} className="w-full text-left flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-slate-600 transition-all">
+                                                            <span className="text-xs text-slate-300">${ruedaNivel === 'low' ? a.nombre_low : a.nombre}</span>
+                                                            <span className="text-[9px] uppercase text-slate-500">${a.nivel}</span>
+                                                        </button>
+                                                    `)}
+                                                </div>
+                                            </div>
+                                        ` : null}
+                                    </div>
+                                ` : activeStep === 'guide' ? html`
+                                    <!-- MODO GUIADO POR 3 PREGUNTAS VIVENCIALES -->
+                                    <div className="space-y-5">
+                                        <div className="p-4 rounded-xl bg-blue-950/30 border border-blue-900/60 text-xs text-blue-200 leading-relaxed">
+                                            <div className="font-bold text-blue-300 mb-1 flex items-center gap-1.5"><${Lucide.Compass} size=${14}/> ¿Cómo ubicar lo que sientes?</div>
+                                            Responde estas 3 preguntas moviendo los deslizadores; la esfera viajará sola al punto correspondiente del cubo.
+                                        </div>
+
+                                        <div className="space-y-4 p-4 rounded-xl bg-slate-900/80 border border-slate-800">
+                                            <div>
+                                                <div className="flex justify-between text-xs font-bold mb-1">
+                                                    <span className="text-emerald-400">1. Sensación interior (Eje X)</span>
+                                                    <span className="font-mono text-slate-300">${markerPos.x.toFixed(1)}</span>
+                                                </div>
+                                                <p className="text-[11px] text-slate-400 mb-2">¿Se siente incómodo/doloroso (−) o agradable/satisfactorio (+)?</p>
+                                                <input type="range" min="-5.5" max="5.5" step="0.5" value=${markerPos.x} onChange=${e => setMarker(parseFloat(e.target.value), markerPos.y, markerPos.z)} className="w-full accent-emerald-500" />
+                                                <div className="flex justify-between text-[10px] text-slate-500 mt-1"><span>Malestar (−5.5)</span><span>Neutro (0)</span><span>Bienestar (+5.5)</span></div>
+                                            </div>
+
+                                            <div className="pt-3 border-t border-slate-800">
+                                                <div className="flex justify-between text-xs font-bold mb-1">
+                                                    <span className="text-amber-400">2. Energía en el cuerpo (Eje Y)</span>
+                                                    <span className="font-mono text-slate-300">${markerPos.y.toFixed(1)}</span>
+                                                </div>
+                                                <p className="text-[11px] text-slate-400 mb-2">¿Tu cuerpo está apagado/en calma (−) o activado/acelerado (+)?</p>
+                                                <input type="range" min="-5.5" max="5.5" step="0.5" value=${markerPos.y} onChange=${e => setMarker(markerPos.x, parseFloat(e.target.value), markerPos.z)} className="w-full accent-amber-500" />
+                                                <div className="flex justify-between text-[10px] text-slate-500 mt-1"><span>Apagado / Calma (−5.5)</span><span>Estable (0)</span><span>Alerta / Tensión (+5.5)</span></div>
+                                            </div>
+
+                                            <div className="pt-3 border-t border-slate-800">
+                                                <div className="flex justify-between text-xs font-bold mb-1">
+                                                    <span className="text-purple-400">3. Impulso interior (Eje Z)</span>
+                                                    <span className="font-mono text-slate-300">${markerPos.z.toFixed(1)}</span>
+                                                </div>
+                                                <p className="text-[11px] text-slate-400 mb-2">¿Te pide cerrarte/alejarte (−) o abrirte/ir hacia adelante (+)?</p>
+                                                <input type="range" min="-5.5" max="5.5" step="0.5" value=${markerPos.z} onChange=${e => setMarker(markerPos.x, markerPos.y, parseFloat(e.target.value))} className="w-full accent-purple-500" />
+                                                <div className="flex justify-between text-[10px] text-slate-500 mt-1"><span>Cerrarme / Huir (−5.5)</span><span>Presente (0)</span><span>Abrirme / Buscar (+5.5)</span></div>
+                                            </div>
+                                        </div>
+
+                                        <div className="p-4 rounded-xl border border-indigo-900 bg-indigo-950/40 text-center">
+                                            <div className="text-[10px] uppercase tracking-widest text-indigo-300 font-bold">Emoción resultante</div>
+                                            <div className="text-lg font-bold text-white mt-1">${interpretation.titulo}</div>
+                                            <button onClick=${() => setActiveStep('label')} className="mt-3 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white">Ver ficha completa</button>
+                                        </div>
+                                    </div>
+                                ` : activeStep === 'acomp' && p ? html`
+                                    <!-- ESCUELA DE ACOMPAÑAMIENTO (PARA EDUCADORES Y ACOMPAÑANTES) -->
+                                    <div className="space-y-4">
+                                        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+                                            <div className="text-[10px] uppercase tracking-widest text-blue-400 font-bold mb-1">Escuela de Acompañamiento</div>
+                                            <div className="text-base font-bold text-white">${p.nombre}</div>
+                                            <div className="text-[11px] text-slate-400 mt-0.5">${p.familia}</div>
+                                        </div>
+
+                                        <div className="p-4 rounded-xl border border-emerald-800/60 bg-emerald-950/20 space-y-2 text-xs">
+                                            <div className="flex items-center gap-1.5 text-emerald-300 font-bold uppercase tracking-wider text-[10px]">
+                                                <${Lucide.CheckCircle2} size=${14}/> Qué validar y hacer primero
+                                            </div>
+                                            <p className="text-slate-200 leading-relaxed">${p.acomp_validar}</p>
+                                        </div>
+
+                                        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 space-y-2 text-xs">
+                                            <div className="flex items-center gap-1.5 text-rose-300 font-bold uppercase tracking-wider text-[10px]">
+                                                <${Lucide.AlertTriangle} size=${14}/> Error común que debes evitar
+                                            </div>
+                                            <p className="text-slate-200 leading-relaxed">${p.acomp_evitar}</p>
+                                        </div>
+
+                                        <div className="p-4 rounded-xl border border-amber-800/60 bg-amber-950/20 space-y-2 text-xs">
+                                            <div className="flex items-center gap-1.5 text-amber-300 font-bold uppercase tracking-wider text-[10px]">
+                                                <${Lucide.MessageCircleQuestion} size=${14}/> Pregunta sugerida para abrir diálogo
+                                            </div>
+                                            <p className="text-amber-100 italic leading-relaxed">«${p.reencuadra}»</p>
+                                        </div>
+
+                                        <div className="p-4 rounded-xl border border-purple-800/60 bg-purple-950/20 space-y-2 text-xs">
+                                            <div className="flex items-center gap-1.5 text-purple-300 font-bold uppercase tracking-wider text-[10px]">
+                                                <${Lucide.Eye} size=${14}/> Clave de discernimiento (Nivel High)
+                                            </div>
+                                            <div className="font-bold text-purple-200">${p.nombre_high}</div>
+                                            <p className="text-slate-300 leading-relaxed">${p.examen}</p>
+                                        </div>
+                                    </div>
+                                ` : html`
+                                    <!-- PESTAÑA CUADERNO Y CUSTODIA DE DATOS -->
+                                    <div className="space-y-4 pb-8">
+                                        <!-- SELECTOR DE CUADERNO (ESPACIO DE TRABAJO) -->
+                                        <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                                            <label className="text-[9px] uppercase tracking-widest text-slate-400 font-bold flex items-center gap-1">
+                                                <${Lucide.FolderLock} size=${12} className="text-amber-400"/> Espacio / Cuaderno Activo
+                                            </label>
+                                            <select value=${cuaderno} onChange=${e => cambiarCuaderno(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-semibold outline-none">
+                                                ${CUADERNOS.map(c => html`<option key=${c.id} value=${c.id}>${c.nombre}</option>`)}
+                                            </select>
+                                            <p className="text-[10px] text-slate-400 leading-relaxed">${CUADERNOS.find(c => c.id === cuaderno)?.desc}</p>
+                                        </div>
+
+                                        <!-- BOTONES DE CUSTODIA (EXPORTAR CON PIN / IMPORTAR / LIMPIAR) -->
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button onClick=${iniciarExportCifrado} className="text-xs flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-950/60 border border-emerald-700/70 text-emerald-200 hover:bg-emerald-900/60 font-semibold transition-all">
+                                                <${Lucide.Lock} size=${13}/> Exportar con PIN
+                                            </button>
+                                            <button onClick=${exportPlano} className="text-xs flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-all">
+                                                <${Lucide.Download} size=${13}/> Exportar JSON
+                                            </button>
+                                            <button onClick=${() => fileInputRef.current.click()} className="col-span-2 text-xs flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-950/50 border border-blue-800 text-blue-200 hover:bg-blue-900/50 transition-all">
+                                                <${Lucide.Upload} size=${13}/> Cargar Cuaderno o Cartografía (.ruler / .json)
+                                            </button>
+                                            <input type="file" accept=".json,.ruler" ref=${fileInputRef} onChange=${importData} className="hidden" />
+                                        </div>
+                                        ${importError ? html`<p className="text-xs text-rose-400">${importError}</p>` : null}
+                                        <p className="text-[10px] text-slate-500">${lastExport ? `Último respaldo de este cuaderno: ${fmtFecha(lastExport)}` : 'Este cuaderno aún no se ha exportado.'}</p>
+
+                                        ${modoPrivado ? html`
+                                            <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-800 text-xs text-amber-200 text-center space-y-2">
+                                                <div className="font-bold">Modo Privacidad Rápida Activo</div>
+                                                <p>Tus notas y trayectorias están ocultas en pantalla.</p>
+                                                <button onClick=${() => setModoPrivado(false)} className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-bold">Mostrar mis notas</button>
+                                            </div>
+                                        ` : html`
+                                            <!-- TRAYECTORIAS -->
+                                            ${savedPaths.length > 0 ? html`
+                                                <div className="space-y-2">
+                                                    <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest border-b border-slate-800 pb-1.5">TRAYECTORIAS EN ESTE CUADERNO</p>
+                                                    ${savedPaths.map(path => html`
+                                                        <div key=${path.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900/60 flex flex-col gap-1.5">
+                                                            <div className="flex justify-between items-center">
+                                                                <span className="text-xs font-bold text-blue-200 flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style=${{ backgroundColor: path.color }}></span>${path.name}</span>
+                                                                <button onClick=${() => setSavedPaths(prev => prev.filter(pa => pa.id !== path.id))} className="text-rose-400 hover:text-rose-300"><${Lucide.Trash2} size=${13}/></button>
+                                                            </div>
+                                                        </div>
+                                                    `)}
+                                                </div>
+                                            ` : null}
+
+                                            <!-- NOTAS / PINES -->
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between items-center border-b border-slate-800 pb-1.5">
+                                                    <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">NOTAS GUARDADAS (${savedPins.length})</p>
+                                                    ${savedPins.length > 0 ? html`
+                                                        <button onClick=${() => { if (confirm("¿Limpiar todas las notas de este cuaderno?")) { setSavedPins([]); setSavedPaths([]); } }} className="text-[10px] text-slate-500 hover:text-rose-400">Vaciar cuaderno</button>
+                                                    ` : null}
+                                                </div>
+                                                ${savedPins.length === 0 ? html`
+                                                    <p className="text-xs text-slate-500 italic text-center py-6">Este cuaderno está limpio. Mueve la esfera y pulsa "Guardar en mi cuaderno" o carga un archivo externo.</p>
+                                                ` : savedPins.map(pin => html`
+                                                    <div key=${pin.id} className="p-3 rounded-xl border border-slate-800 bg-[#0f172a] flex flex-col gap-1.5">
+                                                        <div className="flex justify-between items-start gap-2">
+                                                            <button onClick=${() => setMarker(pin.x, pin.y, pin.z)} className="text-left flex items-center gap-2 flex-grow">
+                                                                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style=${{ backgroundColor: pin.color || '#fbbf24' }}></span>
+                                                                <span className="text-xs font-bold text-slate-100 hover:text-blue-300">${pin.text}</span>
+                                                            </button>
+                                                            <div className="flex gap-1.5">
+                                                                <button onClick=${() => editPin(pin)} className="text-emerald-400 hover:text-emerald-300"><${Lucide.Edit2} size=${13}/></button>
+                                                                <button onClick=${() => deletePin(pin.id)} className="text-rose-400 hover:text-rose-300"><${Lucide.Trash2} size=${13}/></button>
+                                                            </div>
+                                                        </div>
+                                                        ${pin.descripcion ? html`<p className="text-[11px] text-slate-400 pl-4 whitespace-pre-line">${pin.descripcion}</p>` : null}
+                                                        <div className="flex gap-3 text-[9px] font-mono text-slate-500 pl-4">
+                                                            <span>X:${pin.x.toFixed(1)}</span><span>Y:${pin.y.toFixed(1)}</span><span>Z:${pin.z.toFixed(1)}</span>
+                                                            <span className="ml-auto">${fmtFecha(pin.updatedAt)}</span>
+                                                        </div>
+                                                    </div>
+                                                `)}
+                                            </div>
+                                        `}
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+                    </aside>
+
+                    <!-- ÁREA DE PROYECCIÓN 3D -->
+                    <main className="flex-grow relative h-full flex flex-col overflow-hidden">
+                        <!-- HUD SUPERIOR -->
+                        <div className="absolute top-4 left-4 right-4 z-10 flex justify-between items-center pointer-events-none gap-2">
+                            <div className="flex gap-2 pointer-events-auto items-center">
+                                <button onClick=${() => setIsSidebarOpen(!isSidebarOpen)} className="p-3 rounded-xl bg-[#0f172a]/90 backdrop-blur-md border border-slate-700 text-slate-300 hover:text-white shadow-xl"><${isSidebarOpen ? Lucide.ChevronLeft : Lucide.Menu} size=${20} /></button>
+                                <form onSubmit=${handleSearch} className="relative hidden sm:block">
+                                    <${Lucide.Search} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size=${15} />
+                                    <input type="text" placeholder="Buscar emoción (ej. paz, rabia, acedia, bajón)..." value=${searchTerm} onChange=${e => setSearchTerm(e.target.value)} className="bg-[#0f172a]/90 backdrop-blur-md border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs w-72 focus:outline-none focus:border-blue-500 text-slate-200 shadow-xl" />
+                                </form>
+                            </div>
+
+                            <!-- BOTÓN DE PRIVACIDAD RÁPIDA Y ESTADO DEL CUADERNO -->
+                            <div className="flex gap-2 pointer-events-auto items-center">
+                                <button onClick=${() => { setModoPrivado(!modoPrivado); if (!modoPrivado) setMarker(0, 0, 0); }} className=${`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 shadow-xl transition-all ${modoPrivado ? 'bg-amber-600 border-amber-400 text-white' : 'bg-[#0f172a]/90 border-slate-700 text-slate-300 hover:text-white'}`} title="Ocultar notas personales y centrar el cubo al instante">
+                                    <${modoPrivado ? Lucide.EyeOff : Lucide.Shield} size=${16}/>
+                                    <span className="hidden md:inline">${modoPrivado ? 'Privacidad Activa' : 'Privacidad Rápida'}</span>
+                                </button>
+                                <button onClick=${() => setShowAbout(true)} className="p-2.5 rounded-xl bg-[#0f172a]/90 border border-slate-700 text-slate-400 hover:text-white shadow-xl" title="Acerca de Emociones 3D"><${Lucide.Info} size=${18}/></button>
+                            </div>
+                        </div>
+
+                        <!-- RUEDA DE AFINADO VERTICAL FLOTANTE (ESTILO PITCH / MOD WHEEL) -->
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 z-10 pointer-events-auto flex flex-col items-center bg-[#0f172a]/90 backdrop-blur-md border border-slate-700/80 p-2 rounded-2xl shadow-2xl">
+                            <span className="text-[8px] uppercase tracking-widest text-slate-400 font-bold mb-1.5">Afinado</span>
+                            <div className="flex flex-col gap-1.5">
+                                ${[...RUEDA_NIVELES].reverse().map(r => html`
+                                    <button key=${r.id} onClick=${() => setRuedaNivel(r.id)} className=${`w-12 py-2 rounded-xl text-[10px] font-bold border transition-all flex flex-col items-center ${ruedaNivel === r.id ? 'bg-blue-600 border-blue-400 text-white scale-105 shadow-lg' : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white'}`} title=${r.titulo}>
+                                        <span>${r.tag}</span>
+                                        <span className="text-[7px] font-normal opacity-80">${r.id === 'high' ? 'Examen' : r.id === 'medium' ? 'Matices' : 'Básico'}</span>
+                                    </button>
+                                `)}
+                            </div>
+                        </div>
+
+                        <!-- LIENZO 3D -->
+                        <div ref=${mountRef} className="w-full h-full cursor-move" />
+
+                        <!-- HUD INFERIOR -->
+                        <div className="absolute bottom-4 left-4 right-4 flex justify-between items-end pointer-events-none gap-2">
+                            <div className="coord-pill px-3 py-2 sm:px-5 sm:py-2.5 pointer-events-auto flex gap-3 sm:gap-5 shadow-2xl items-center">
+                                ${[
+                                    ['x', 'Sensación (X)', 'text-emerald-400'],
+                                    ['y', 'Energía (Y)', 'text-amber-400'],
+                                    ['z', 'Impulso (Z)', 'text-purple-400']
+                                ].map(([ax, lbl, cls]) => html`
+                                    <div key=${ax} className="flex flex-col items-center">
+                                        <span className=${`text-[8px] sm:text-[9px] font-bold ${cls} uppercase tracking-wider`}>${lbl}</span>
+                                        <input type="number" step="0.5" className="coord-input bg-transparent hover:bg-slate-800/60 focus:bg-slate-800 rounded text-center w-12 sm:w-14 outline-none text-sm sm:text-base font-mono text-white" value=${coordInputs[ax]} onChange=${e => { setCoordInputs(prev => ({ ...prev, [ax]: e.target.value })); const n = parseFloat(e.target.value); if (!isNaN(n)) setMarker(ax === 'x' ? n : markerPos.x, ax === 'y' ? n : markerPos.y, ax === 'z' ? n : markerPos.z); }} />
+                                    </div>
+                                `)}
+                            </div>
+
+                            <div className="flex gap-2 pointer-events-auto items-center">
+                                <button onClick=${() => setShowSystemLabels(!showSystemLabels)} className=${`p-3 rounded-xl border transition-all shadow-xl ${showSystemLabels ? 'bg-fuchsia-600/40 border-fuchsia-400 text-white' : 'bg-[#0f172a]/90 border-slate-700 text-slate-400 hover:text-white'}`} title="Mostrar/Ocultar etiquetas 3D"><${Lucide.Type} size=${18} /></button>
+                                <button onClick=${() => setShowGrid(!showGrid)} className=${`p-3 rounded-xl border transition-all shadow-xl ${showGrid ? 'bg-indigo-600/40 border-indigo-400 text-white' : 'bg-[#0f172a]/90 border-slate-700 text-slate-400 hover:text-white'}`} title="Mostrar/Ocultar nodos del cubo"><${Lucide.Grid3x3} size=${18} /></button>
+                                <button onClick=${() => { setEditingPathId(null); setNewPathName(""); setPathSequence([]); setShowPathModal(true); }} className="p-3 rounded-xl bg-blue-600/20 border border-blue-500 text-blue-300 hover:bg-blue-600/40 shadow-xl" title="Trazar Trayectoria"><${Lucide.Waypoints} size=${18} /></button>
+                                <button onClick=${() => openSaveModal({ text: interpretation.titulo })} className="p-3 rounded-xl bg-amber-600/20 border border-amber-500 text-amber-300 hover:bg-amber-600/40 shadow-xl" title="Guardar Nota en esta coordenada"><${Lucide.MapPin} size=${18} /></button>
+                                <button onClick=${() => setMarker(0, 0, 0)} className="p-3 rounded-xl bg-[#0f172a]/90 border border-slate-700 text-slate-400 hover:text-white shadow-xl" title="Volver al Centro (0,0,0)"><${Lucide.RotateCcw} size=${18} /></button>
+                            </div>
+                        </div>
+
+                        <!-- MODAL GUARDAR PIN -->
+                        ${showModal ? html`
+                            <div className="absolute inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-auto p-4">
+                                <div className="bg-[#0f172a] border border-slate-700 p-6 rounded-2xl w-full max-w-sm shadow-2xl">
+                                    <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2"><${Lucide.MapPin} size=${18} style=${{ color: newNoteColor }} /> Guardar en ${CUADERNOS.find(c => c.id === cuaderno)?.nombre}</h3>
+                                    <p className="text-[11px] text-slate-400 mb-3">X: ${markerPos.x.toFixed(1)} · Y: ${markerPos.y.toFixed(1)} · Z: ${markerPos.z.toFixed(1)} (${interpretation.titulo})</p>
+                                    <input type="text" autoFocus placeholder="Título o vivencia..." value=${newNoteText} onChange=${e => setNewNoteText(e.target.value)} className="field mb-3" />
+                                    <textarea rows="3" placeholder="Notas personales, qué ocurrió, cómo lo viviste..." value=${newNoteDesc} onChange=${e => setNewNoteDesc(e.target.value)} className="field mb-4"></textarea>
+                                    <div className="flex gap-2.5 mb-5">${PIN_COLORS.map(c => html`<button key=${c} onClick=${() => setNewNoteColor(c)} className=${`w-7 h-7 rounded-full border-2 ${newNoteColor === c ? 'border-white scale-110' : 'border-transparent opacity-70'}`} style=${{ backgroundColor: c }} />`)}</div>
+                                    <div className="flex justify-end gap-2">
+                                        <button onClick=${() => setShowModal(false)} className="px-4 py-2 text-xs text-slate-400 hover:text-white">Cancelar</button>
+                                        <button onClick=${handleSaveNote} className="px-4 py-2 text-xs font-bold bg-amber-600 text-white rounded-xl hover:bg-amber-500">Guardar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : null}
+
+                        <!-- MODAL TRAZAR RUTA -->
+                        ${showPathModal ? html`
+                            <div className="absolute inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-auto p-4">
+                                <div className="bg-[#0f172a] border border-blue-900 p-6 rounded-2xl w-full max-w-md shadow-2xl">
+                                    <h3 className="text-base font-bold text-blue-300 mb-2 flex items-center gap-2"><${Lucide.Waypoints} size=${18}/> Trazar Trayectoria</h3>
+                                    <input type="text" placeholder="Nombre del itinerario..." value=${newPathName} onChange=${e => setNewPathName(e.target.value)} className="field mb-3" />
+                                    <p className="text-[10px] uppercase text-slate-400 font-bold mb-1.5">Selecciona al menos 2 notas en orden:</p>
+                                    <div className="flex flex-wrap gap-1.5 mb-3 max-h-36 overflow-y-auto p-2 bg-slate-900 rounded-xl">
+                                        ${savedPins.map(pin => html`
+                                            <button key=${pin.id} onClick=${() => setPathSequence([...pathSequence, pin.id])} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded-lg text-slate-200">${pin.text}</button>
+                                        `)}
+                                    </div>
+                                    <div className="text-xs text-blue-200 mb-4 min-h-[28px]">
+                                        ${pathSequence.map(id => savedPins.find(p => p.id === id)?.text).filter(Boolean).join(" → ") || "Ningún punto seleccionado aún."}
+                                    </div>
+                                    <div className="flex justify-end gap-2">
+                                        <button onClick=${() => setShowPathModal(false)} className="px-4 py-2 text-xs text-slate-400">Cancelar</button>
+                                        <button onClick=${handleSavePath} className="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl">Guardar Ruta</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : null}
+
+                        <!-- MODAL DE CIFRADO AES-GCM CON PIN -->
+                        ${showCryptoModal ? html`
+                            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-auto p-4">
+                                <div className="bg-[#0f172a] border border-emerald-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl">
+                                    <h3 className="text-base font-bold text-emerald-300 mb-2 flex items-center gap-2"><${Lucide.Lock} size=${18}/> ${cryptoMode === 'export' ? 'Custodiar Archivo con Clave/PIN' : 'Desbloquear Archivo Custodiado'}</h3>
+                                    <p className="text-xs text-slate-300 mb-3 leading-relaxed">
+                                        ${cryptoMode === 'export'
+                                            ? 'Tus notas se cifrarán con estándar AES-256 antes de descargarse. Nadie podrá leer el archivo sin esta clave.'
+                                            : 'Este archivo está cifrado. Ingresa su PIN o contraseña para abrirlo.'}
+                                    </p>
+                                    <input type="password" autoFocus placeholder="Ingresa PIN o contraseña..." value=${cryptoPass} onChange=${e => { setCryptoPass(e.target.value); setCryptoError(""); }} className="field mb-2" />
+                                    ${cryptoError ? html`<p className="text-xs text-rose-400 mb-2">${cryptoError}</p>` : null}
+                                    <div className="flex justify-end gap-2 mt-4">
+                                        <button onClick=${() => setShowCryptoModal(false)} className="px-4 py-2 text-xs text-slate-400">Cancelar</button>
+                                        <button onClick=${confirmarCryptoModal} className="px-4 py-2 text-xs font-bold bg-emerald-600 text-white rounded-xl hover:bg-emerald-500">${cryptoMode === 'export' ? 'Cifrar y Descargar' : 'Desbloquear'}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : null}
+
+                        <!-- MODAL IMPORTAR: FUSIONAR O REEMPLAZAR -->
+                        ${pendingImport ? html`
+                            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-auto p-4">
+                                <div className="bg-[#0f172a] border border-blue-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl">
+                                    <h3 className="text-base font-bold text-blue-300 mb-2 flex items-center gap-2"><${Lucide.Upload} size=${18}/> Cargar notas</h3>
+                                    <p className="text-xs text-slate-300 mb-4 leading-relaxed">El archivo trae ${pendingImport.pins.length} notas${pendingImport.exportedAt ? ` (exportadas el ${fmtFecha(Date.parse(pendingImport.exportedAt))})` : ''}${pendingImport.cuadernoOrigen && pendingImport.cuadernoOrigen !== cuaderno ? `, del cuaderno «${pendingImport.cuadernoOrigen}»` : ''}. El cuaderno activo, «${CUADERNOS.find(c => c.id === cuaderno)?.nombre}», tiene ${savedPins.length}.</p>
+                                    <div className="space-y-2">
+                                        <button onClick=${() => aplicarImport('fusionar')} className="w-full text-left p-3 rounded-xl border border-emerald-800 bg-emerald-950/40 hover:bg-emerald-900/40"><div className="text-sm font-bold text-emerald-300">Fusionar</div><div className="text-[11px] text-slate-400">Conserva lo que hay y añade lo del archivo. Si una nota existe en ambos, queda la del archivo.</div></button>
+                                        <button onClick=${() => aplicarImport('reemplazar')} className="w-full text-left p-3 rounded-xl border border-red-900 bg-red-950/30 hover:bg-red-900/30"><div className="text-sm font-bold text-rose-300">Reemplazar</div><div className="text-[11px] text-slate-400">Borra las ${savedPins.length} notas de este cuaderno y deja solo las del archivo.</div></button>
+                                    </div>
+                                    <div className="flex justify-end mt-4"><button onClick=${() => setPendingImport(null)} className="px-4 py-2 text-xs text-slate-400">Cancelar</button></div>
+                                </div>
+                            </div>
+                        ` : null}
+
+                        <!-- MODAL CURADOR -->
+                        ${showCuradorModal && curadorForm ? html`
+                            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-auto p-4">
+                                <div className="bg-[#0f172a] border border-fuchsia-800 p-6 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90%]">
+                                    <h3 className="text-base font-bold text-fuchsia-300 mb-1 flex-shrink-0">Editar perfil del glosario</h3>
+                                    <p className="text-[10px] font-mono text-slate-500 mb-2 flex-shrink-0">${curadorForm.id}</p>
+                                    <div className="overflow-y-auto custom-scrollbar pr-2 space-y-2">
+                                        ${CAMPOS_CURADOR.map(([k, etiqueta, tipo]) => html`
+                                            <div key=${k}>
+                                                <label className="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">${etiqueta}</label>
+                                                ${tipo === 'input'
+                                                    ? html`<input type="text" value=${curadorForm[k]} onChange=${e => setCuradorForm(f => ({ ...f, [k]: e.target.value }))} className="field" />`
+                                                    : html`<textarea rows="2" value=${curadorForm[k]} onChange=${e => setCuradorForm(f => ({ ...f, [k]: e.target.value }))} className="field"></textarea>`}
+                                            </div>
+                                        `)}
+                                    </div>
+                                    <div className="flex justify-end gap-3 flex-shrink-0 pt-4"><button onClick=${() => setShowCuradorModal(false)} className="px-4 py-2 text-xs text-slate-400">Cancelar</button><button onClick=${guardarCurador} className="px-4 py-2 text-xs font-bold bg-fuchsia-600 text-white rounded-xl hover:bg-fuchsia-500">Guardar en este navegador</button></div>
+                                </div>
+                            </div>
+                        ` : null}
+
+                        <!-- MODAL ACERCA DE -->
+                        ${showAbout ? html`
+                            <div className="absolute inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-auto p-4" onClick=${() => setShowAbout(false)}>
+                                <div className="bg-[#0f172a] border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl space-y-3 text-xs text-slate-300 leading-relaxed" onClick=${e => e.stopPropagation()}>
+                                    <h3 className="text-base font-bold text-blue-300">Emociones 3D <span className="font-mono text-xs text-slate-400">v${APP_VERSION} · glosario ${glosario.version}</span></h3>
+                                    <p>Integra el modelo tridimensional de Lövheim revisado con el Circumplejo de Russell (Valencia X y Energía Y), los sistemas motivacionales BAS/BIS de Gray (Dirección Z) y los 5 componentes de Klaus Scherer.</p>
+                                    <p><strong className="text-white">Rueda de Afinado:</strong> Alterna en tiempo real entre <em>LOW</em> (27 emociones cotidianas para jóvenes), <em>MED</em> (79 nodos con guía para educadores y acompañantes) y <em>HIGH</em> (discernimiento interior y examen de conciencia).</p>
+                                    <p><strong className="text-white">Custodia y Confidencialidad:</strong> Cuadernos separados (Personal, Taller Limpio, Acompañamiento), botón de Privacidad Rápida y exportación cifrada AES-256 con PIN.</p>
+                                    <p><strong className="text-white">Tus datos:</strong> Las notas se guardan solo en este dispositivo. No hay servidor ni cuentas; salen únicamente cuando pulsas «Exportar». Conviene exportar con regularidad.</p>
+                                    <p><strong className="text-white">Nota sobre el modelo:</strong> El cubo original de Lövheim (2012) sitúa la ira en serotonina baja, noradrenalina alta y dopamina alta. Esta revisión la coloca en +X, +Y, −Z (autoafirmación que rechaza).</p>
+                                    ${CURADOR ? html`<div className="p-3 rounded-xl border border-fuchsia-800 bg-fuchsia-950/30 flex items-center justify-between gap-2"><span>Modo curador: ${Object.keys(glosarioEdits).length} perfiles editados en este navegador.</span><button onClick=${exportarGlosario} className="px-3 py-1.5 rounded-lg bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-500 flex-shrink-0">Exportar glosario.json</button></div>` : null}
+                                    <div className="flex justify-end pt-2"><button onClick=${() => setShowAbout(false)} className="px-4 py-2 bg-slate-800 text-white rounded-xl">Cerrar</button></div>
+                                </div>
+                            </div>
+                        ` : null}
+                    </main>
+                </div>
+            `;
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+
+        if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) {
+            window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+        }
+    </script>
+</body>
+</html>

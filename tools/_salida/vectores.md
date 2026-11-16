@@ -1,0 +1,28 @@
+# Vectores (sutil -> moderado -> desbordante)
+
+- (-1, -1, -1): Desgano / Apatía -> Tristeza / Decepción -> Hundimiento / Vacío
+- (-1, -1, 0): Decaimiento / Desánimo -> Abatimiento / Desaliento -> Derrumbe / Postración
+- (-1, -1, 1): Temor / Sentirme frágil -> Miedo / Indefensión -> Terror / Desamparo
+- (-1, 0, -1): Desagrado / Rechazo leve -> Rechazo / Asco -> Shock / Bloqueo
+- (-1, 0, 0): Insatisfacción -> Pena / Melancolía -> Desolación / Dolor hondo
+- (-1, 0, 1): Echar de menos / Extrañar -> Nostalgia / Añoranza -> Desgarro / Dolor por la ausencia
+- (-1, 1, -1): Inseguridad / Nervios -> Ansiedad / Angustia -> Pánico / Parálisis
+- (-1, 1, 0): Presión / Apuro -> Estrés / Agobio -> Crisis de Nervios / Desborde
+- (-1, 1, 1): Impaciencia / Contrariedad -> Frustración / Terquedad -> Obsesión / Desesperación
+- (0, -1, -1): Retraimiento / Callarme -> Ausencia / Piloto automático -> Apagón / No siento nada
+- (0, -1, 0): Cansancio / Necesidad de pausa -> Sueño / Pesadez -> Agotamiento / Estar rendido
+- (0, -1, 1): Atención Serena -> Paciencia / Espera confiada -> Entrega Silenciosa / Contemplación
+- (0, 0, -1): Desinterés -> Aburrimiento / Hastío -> Desconexión total / Nada me importa
+- (0, 0, 1): Curiosidad / Atención -> Deseo / Atracción -> Ansia / Fijación
+- (0, 1, -1): Desconfianza / Guardia alta -> Suspicacia / Recelo -> Oposición total / Cerrazón
+- (0, 1, 0): Alerta / Activo -> Aceleración / Tensión -> Sobresalto / Alarma
+- (0, 1, 1): Iniciativa / Ganas de actuar -> Empeño / Determinación -> Frenesí / No poder parar
+- (1, -1, -1): Tomar distancia / Querer estar solo -> Aislamiento / Indiferencia -> Desprecio / Frialdad
+- (1, -1, 0): Alivio / Sosiego -> Relajación / Paz Corporal -> Descanso Profundo / Quietud
+- (1, -1, 1): Tranquilidad / Buena disposición -> Serenidad / Confianza -> Paz Profunda / Plenitud
+- (1, 0, -1): Reserva / Ir a lo mío -> Desdén / No me afecta -> Insensibilidad / Coraza
+- (1, 0, 0): Agrado / Conformidad -> Bienestar / Contento -> Gozo sereno / Dicha
+- (1, 0, 1): Acogida / Apertura -> Cariño / Afecto -> Fascinación / Encanto
+- (1, 1, -1): Fastidio / Poner límite -> Enfado / Irritación -> Ira / Rechazo Violento
+- (1, 1, 0): Ánimo / Chispa -> Alegría / Vitalidad -> Júbilo / Alegría desbordante
+- (1, 1, 1): Ilusión / Simpatía -> Amor / Inspiración -> Euforia / Entusiasmo desbordado
